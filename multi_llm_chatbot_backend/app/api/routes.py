@@ -2,8 +2,12 @@ from fastapi import APIRouter, Body
 from app.llm.mistral_client import MistralClient
 from app.models.persona import Persona
 from app.core.orchestrator import ChatOrchestrator
+from .clarify_routes import router as clarify_router
+
+app.include_router(clarify_router, prefix="/api")
 
 router = APIRouter()
+router.include_router(clarify_router, prefix="/api")
 
 # Singleton for now
 llm = MistralClient()
