@@ -1,15 +1,19 @@
-from fastapi import APIRouter, Request, HTTPException, Body, Depends
+from fastapi import APIRouter, Request, HTTPException, Body, Depends, Query
 from app.models.persona import Persona
 from app.core.session_manager import get_session_manager
 from app.api.utils import get_or_create_session_for_request_async
 from app.core.bootstrap import chat_orchestrator
 from app.core.auth import get_current_active_user
+from app.api.utils import get_chat_session_with_defaults
+
 from app.models.user import User
 from pydantic import BaseModel
 from typing import Optional
 import logging
 from app.core.database import get_database
+from app.api.routes.chat_sessions import ChatSession
 from bson import ObjectId
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,7 @@ async def switch_to_chat(
             raise HTTPException(status_code=404, detail="Chat session not found")
         
         # Get the loaded session
-        session = session_manager.get_session(memory_session_id)
+        session = session_manager.get_session(memory_session_id, user_id=current_user.id)
         
         # Get the original MongoDB chat session to retrieve messages in proper format
         db = get_database()
@@ -81,7 +85,13 @@ async def switch_to_chat(
         original_messages = chat_session.get("messages", [])
         
         logger.info(f"Switching to chat {request.chat_session_id} with {len(original_messages)} messages")
-        
+
+        # Update last accessed timestamp
+        await db.chat_sessions.update_one(
+            {"_id": ObjectId(request.chat_session_id)},
+            {"$set": {"updated_at": datetime.datetime.now(datetime.timezone.utc)}}
+        )
+
         return {
             "status": "success",
             "memory_session_id": memory_session_id,
@@ -113,7 +123,7 @@ async def create_new_chat(
         memory_session_id = await get_or_create_session_for_request_async(req)
         
         # Ensure the session is completely clean
-        session = session_manager.get_session(memory_session_id)
+        session = session_manager.get_session(memory_session_id, user_id=current_user.id)
         session.clear_all_data()  # This clears both messages and documents
         
         return {
@@ -131,7 +141,7 @@ async def create_new_chat(
         raise HTTPException(status_code=500, detail="Failed to create new chat")
 
 @router.post("/chat-sequential")
-async def chat_sequential_enhanced(message: ChatMessage, request: Request):
+async def chat_sequential_enhanced(message: ChatMessage, request: Request, current_user: User = Depends(get_current_active_user)):
     """
     Enhanced sequential chat with proper session management
     """
@@ -150,7 +160,7 @@ async def chat_sequential_enhanced(message: ChatMessage, request: Request):
                 session_id = await get_or_create_session_for_request_async(
                     request,
                     chat_session_id=message.chat_session_id,
-                    user_id="anonymous"  # We don't have user context here
+                    user_id=str(current_user.id)  # We don't have user context here
                 )
         else:
             # This is a new chat or no specific chat session
@@ -160,7 +170,7 @@ async def chat_sequential_enhanced(message: ChatMessage, request: Request):
             )
         
         # Get the session
-        session = session_manager.get_session(session_id)
+        session = session_manager.get_session(session_id, user_id=current_user.id)
         
         # Debug logging
         user_messages_count = len([msg for msg in session.messages if msg.get('role') == 'user'])
@@ -206,6 +216,7 @@ async def chat_sequential_enhanced(message: ChatMessage, request: Request):
                     user_input=message.user_input,
                     persona_id=persona_id,
                     session_id=session_id,
+                    user_id=str(current_user.id),
                     response_length=message.response_length or "medium"
                 )
                 
@@ -295,7 +306,7 @@ async def chat_with_specific_advisor(persona_id: str, input: UserInput, request:
         }
 
 @router.post("/reply-to-advisor")
-async def reply_to_advisor(reply: ReplyToAdvisor, request: Request):
+async def reply_to_advisor(reply: ReplyToAdvisor, request: Request, current_user: User = Depends(get_current_active_user)):
     """Reply to a specific advisor with proper context - UPDATED"""
     try:
         if reply.advisor_id not in chat_orchestrator.personas:
@@ -303,11 +314,21 @@ async def reply_to_advisor(reply: ReplyToAdvisor, request: Request):
 
         # Handle session management for existing chats
         if reply.chat_session_id:
-            session_id = f"chat_{reply.chat_session_id}"
+            session_id = await get_or_create_session_for_request_async(
+                request,
+                chat_session_id=reply.chat_session_id,
+                user_id=str(current_user.id)
+            )
         else:
-            session_id = await get_or_create_session_for_request_async(request)
+            session_id = await get_or_create_session_for_request_async(
+                request,
+                user_id=str(current_user.id)
+            )
+
         
-        session = session_manager.get_session(session_id)
+        session = session_manager.get_session(session_id, user_id=current_user.id)
+        await get_or_create_session_for_request_async(request, chat_session_id=reply.chat_session_id, user_id=str(current_user.id))
+
         
         # Find the original message being replied to for context
         original_message = None
@@ -325,7 +346,8 @@ async def reply_to_advisor(reply: ReplyToAdvisor, request: Request):
         result = await chat_orchestrator.chat_with_persona(
             user_input=contextual_input,
             persona_id=reply.advisor_id,
-            session_id=session_id
+            session_id=session_id,
+            user_id=str(current_user.id)
         )
         
         # Handle response structure
@@ -364,7 +386,7 @@ async def reply_to_advisor(reply: ReplyToAdvisor, request: Request):
         }
 
 @router.post("/ask/")
-async def ask_question(query: PersonaQuery, request: Request):
+async def ask_question(query: PersonaQuery, request: Request, current_user: User = Depends(get_current_active_user)):
     """Ask question - UPDATED"""
     try:
         session_id = await get_or_create_session_for_request_async(request)
@@ -372,7 +394,8 @@ async def ask_question(query: PersonaQuery, request: Request):
         result = await chat_orchestrator.chat_with_persona(
             user_input=query.question,
             persona_id=query.persona,
-            session_id=session_id
+            session_id=session_id,
+            user_id=str(current_user.id)
         )
         
         if result["type"] == "single_persona_response":

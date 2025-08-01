@@ -1,9 +1,14 @@
 from typing import Optional
-from fastapi import Request
+from fastapi import Request, Query, Depends
 from app.core.session_manager import get_session_manager
 from app.core.database import get_database
+from app.models.user import User
+from app.api.routes.auth import get_current_active_user
+from app.api.routes.chat_sessions import ChatSession
+
 from bson import ObjectId
 import logging
+import datetime
 
 logger = logging.getLogger(__name__)
 session_manager = get_session_manager()
@@ -29,7 +34,7 @@ async def load_chat_session_into_context(chat_session_id: str, user_id: str) -> 
         
         # Create or get in-memory session with a unique ID based on chat session
         memory_session_id = f"chat_{chat_session_id}"
-        memory_session = session_manager.get_session(memory_session_id)
+        memory_session = session_manager.get_session(memory_session_id, user_id=user_id)
         
         # Clear existing messages and load from MongoDB
         memory_session.clear_messages()
@@ -76,6 +81,8 @@ async def load_chat_session_into_context(chat_session_id: str, user_id: str) -> 
             memory_session.original_messages.append(message)
         
         logger.info(f"Loaded {len(messages)} messages into session {memory_session_id}")
+        logger.info(f"Session loaded for user_id={user_id}")
+
         return memory_session_id
         
     except Exception as e:
@@ -154,3 +161,39 @@ async def get_or_create_session_for_request_async(
     new_session_id = session_manager.create_session()
     logger.info(f"Created new session: {new_session_id}")
     return new_session_id
+
+async def get_chat_session_with_defaults(
+    chat_session_id: Optional[str] = Query(None, description="Chat session ID (optional - will use latest if not provided)"),
+    current_user: User = Depends(get_current_active_user)
+) -> tuple[str, str]:
+    """
+    Helper function that automatically provides user_id and handles chat_session_id defaults
+    Returns: (chat_session_id, user_id)
+    """
+    user_id = str(current_user.id)
+    
+    if not chat_session_id:
+        # Auto-select the most recent chat session for this user
+        db = get_database()
+        latest_session = await db.chat_sessions.find_one(
+            {"user_id": current_user.id, "is_active": True},
+            sort=[("updated_at", -1)]
+        )
+        
+        if latest_session:
+            chat_session_id = str(latest_session["_id"])
+        else:
+            # Always create a default session if none exists
+            default_session = ChatSession(
+                user_id=current_user.id,
+                title="Default Session",
+                messages=[],
+                created_at=datetime.datetime.now(datetime.timezone.utc),
+                updated_at=datetime.datetime.now(datetime.timezone.utc),
+                is_active=True
+            )
+            
+            result = await db.chat_sessions.insert_one(default_session.dict(by_alias=True))
+            chat_session_id = str(result.inserted_id)
+    
+    return chat_session_id, user_id

@@ -3,7 +3,7 @@ from fastapi import Query
 from app.utils.document_extractor import extract_text_from_file
 from app.core.session_manager import get_session_manager
 from app.core.rag_manager import get_rag_manager
-from app.api.utils import get_or_create_session_for_request
+from app.api.utils import get_or_create_session_for_request, get_or_create_session_for_request_async
 from fastapi.responses import StreamingResponse
 from app.utils.chat_summary import generate_summary_from_messages, parse_summary_to_blocks, format_summary_for_text_export
 from app.utils.file_export import prepare_export_response, generate_pdf_file_from_blocks
@@ -155,10 +155,12 @@ def convert_messages_for_export(messages):
 
 
 @router.post("/upload-document")
-async def upload_document(file: UploadFile = File(...), request: Request = None):
+async def upload_document(file: UploadFile = File(...), request: Request = None,
+                          current_user: User = Depends(get_current_active_user)):
     try:
-        session_id = get_or_create_session_for_request(request)
-        session = session_manager.get_session(session_id)
+        session_id = await get_or_create_session_for_request_async(request, user_id=str(current_user.id))
+        session = session_manager.get_session(session_id, user_id=current_user.id)
+
 
         MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
         if file.size and file.size > MAX_FILE_SIZE:
@@ -180,6 +182,7 @@ async def upload_document(file: UploadFile = File(...), request: Request = None)
         rag_result = rag_manager.add_document(
             content=content,
             filename=file.filename,
+            user_id=str(current_user.id),
             session_id=session_id,
             file_type=file_type
         )
@@ -216,9 +219,12 @@ async def upload_document(file: UploadFile = File(...), request: Request = None)
 
 
 @router.post("/search-documents")
-async def search_documents(request: Request, query: str = Body(..., embed=True), persona: str = Body("", embed=True)):
+async def search_documents(request: Request, query: str = Body(..., embed=True), persona: str = Body("", embed=True),
+                           current_user: User = Depends(get_current_active_user)):
     try:
-        session_id = get_or_create_session_for_request(request)
+        session_id = await get_or_create_session_for_request_async(request, user_id=str(current_user.id))
+        session = session_manager.get_session(session_id, user_id=current_user.id)
+
         rag_manager = get_rag_manager()
 
         persona_contexts = {
@@ -231,6 +237,7 @@ async def search_documents(request: Request, query: str = Body(..., embed=True),
         results = rag_manager.search_documents(
             query=query,
             session_id=session_id,
+            user_id=str(current_user.id),
             persona_context=persona_context,
             n_results=5
         )
@@ -248,21 +255,24 @@ async def search_documents(request: Request, query: str = Body(..., embed=True),
 
 
 @router.get("/document-stats")
-async def get_document_stats(request: Request):
+async def get_document_stats(request: Request, current_user: User = Depends(get_current_active_user)):
     try:
-        session_id = get_or_create_session_for_request(request)
+        #session_id = get_or_create_session_for_request(request)
+        session_id = await get_or_create_session_for_request_async(request, user_id=str(current_user.id))
+
         rag_manager = get_rag_manager()
-        return rag_manager.get_document_stats(session_id)
+        return rag_manager.get_document_stats(session_id, str(current_user.id))
     except Exception as e:
         logger.error(f"Error getting document stats: {str(e)}")
         return {"total_chunks": 0, "total_documents": 0, "documents": []}
 
 
 @router.get("/uploaded-files")
-async def get_uploaded_filenames(request: Request):
+async def get_uploaded_filenames(request: Request, current_user: User = Depends(get_current_active_user)):
     try:
-        session_id = get_or_create_session_for_request(request)
-        session = session_manager.get_session(session_id)
+        session_id = await get_or_create_session_for_request_async(request, user_id=str(current_user.id))
+        session = session_manager.get_session(session_id, user_id=current_user.id)
+
         return {"files": session.uploaded_files}
     except Exception as e:
         logger.error(f"Error getting uploaded files: {str(e)}")
@@ -270,18 +280,20 @@ async def get_uploaded_filenames(request: Request):
 
 
 @router.get("/document-insights/{filename}")
-async def get_document_insights(filename: str, request: Request):
+async def get_document_insights(filename: str, request: Request,  current_user: User = Depends(get_current_active_user)):
     try:
-        session_id = get_or_create_session_for_request(request)
+        session_id = await get_or_create_session_for_request_async(request, user_id=str(current_user.id))
+        session = session_manager.get_session(session_id, user_id=current_user.id)
+
         rag_manager = get_rag_manager()
-        stats = rag_manager.get_document_stats(session_id)
+        stats = rag_manager.get_document_stats(session_id, str(current_user.id))
         document_info = next((doc for doc in stats.get("documents", []) if doc["filename"] == filename), None)
 
         if not document_info:
             raise HTTPException(status_code=404, detail=f"Document {filename} not found")
 
         results = rag_manager.collection.get(
-            where={"session_id": session_id, "filename": filename},
+            where={"session_id": session_id, "user_id": current_user.id, "filename": filename},
             limit=3,
             include=["documents", "metadatas"]
         )
@@ -353,8 +365,8 @@ async def export_chat(
             messages = convert_messages_for_export(raw_messages)
         else:
             # Export current in-memory session (existing behavior)
-            session_id = get_or_create_session_for_request(request)
-            session = session_manager.get_session(session_id)
+            session_id = await get_or_create_session_for_request_async(request, user_id=str(current_user.id))
+            session = session_manager.get_session(session_id, user_id=current_user.id)
             # In-memory messages might already be in the right format, but convert to be safe
             messages = convert_messages_for_export(session.messages)
 
@@ -433,8 +445,8 @@ async def chat_summary(
             messages = convert_messages_for_export(raw_messages)
         else:
             # Summarize current in-memory session (existing behavior)
-            session_id = get_or_create_session_for_request(request)
-            session = session_manager.get_session(session_id)
+            session_id = await get_or_create_session_for_request_async(request, user_id=str(current_user.id))
+            session = session_manager.get_session(session_id, user_id=current_user.id)
             # Convert in-memory messages
             messages = convert_messages_for_export(session.messages)
 

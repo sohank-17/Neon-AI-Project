@@ -39,7 +39,7 @@ async def get_context(
             # Getting context for current session
             session_id = await get_or_create_session_for_request_async(request)
         
-        session = session_manager.get_session(session_id)
+        session = session_manager.get_session(session_id, user_id=current_user.id)
         rag_stats = session.get_rag_stats()
         
         logger.info(f"Retrieved context for session {session_id}: {len(session.messages)} messages")
@@ -85,8 +85,8 @@ async def reset_session(
     try:
         if reset_request.force_new:
             # Force create a completely new session
-            session_id = session_manager.create_session()
-            session = session_manager.get_session(session_id)
+            session_id = session_manager.create_session(user_id=current_user.id)
+            session = session_manager.get_session(session_id, user_id= current_user.id)
             session.clear_all_data()
             
             logger.info(f"Force created new session: {session_id}")
