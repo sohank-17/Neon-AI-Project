@@ -1,24 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Users, ChevronDown } from 'lucide-react';
-
+ 
 const AdvisorStatusDropdown = ({ advisors, thinkingAdvisors, getAdvisorColors, isDark }) => {
   const [isOpen, setIsOpen] = useState(false);
   
-  // Safety checks
-  if (!advisors || typeof advisors !== 'object') {
-    return null;
-  }
-  
-  const advisorEntries = Object.entries(advisors);
-  const thinkingCount = Array.isArray(thinkingAdvisors) 
-    ? thinkingAdvisors.filter(id => id !== 'system').length 
-    : 0;
-  const totalAdvisors = advisorEntries.length;
-
-  const handleToggle = () => {
-    setIsOpen(!isOpen);
-  };
-
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -26,14 +11,28 @@ const AdvisorStatusDropdown = ({ advisors, thinkingAdvisors, getAdvisorColors, i
         setIsOpen(false);
       }
     };
-
+ 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
-
+ 
+  if (!advisors || typeof advisors !== 'object') {
+    return null;
+  }
+  
+  const advisorEntries = Object.entries(advisors);
+  const thinkingCount = Array.isArray(thinkingAdvisors)
+    ? thinkingAdvisors.filter(id => id !== 'system').length
+    : 0;
+  const totalAdvisors = advisorEntries.length;
+ 
+  const handleToggle = () => {
+    setIsOpen(!isOpen);
+  };
+ 
   return (
     <div className="advisor-status-dropdown">
-      <button 
+      <button
         className={`advisor-status-button ${isOpen ? 'open' : ''}`}
         onClick={handleToggle}
       >
@@ -60,10 +59,10 @@ const AdvisorStatusDropdown = ({ advisors, thinkingAdvisors, getAdvisorColors, i
               const isThinking = Array.isArray(thinkingAdvisors) && thinkingAdvisors.includes(id);
               
               return (
-                <div 
-                  key={id} 
+                <div
+                  key={id}
                   className={`advisor-item ${isThinking ? 'thinking' : ''}`}
-                  style={{ 
+                  style={{
                     '--advisor-color': colors.color,
                     '--advisor-bg': colors.bgColor
                   }}
@@ -333,5 +332,5 @@ const AdvisorStatusDropdown = ({ advisors, thinkingAdvisors, getAdvisorColors, i
     </div>
   );
 };
-
+ 
 export default AdvisorStatusDropdown;

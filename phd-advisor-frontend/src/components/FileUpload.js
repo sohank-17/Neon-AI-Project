@@ -3,7 +3,7 @@ import { Upload, FileText, File, X, CheckCircle, AlertCircle } from 'lucide-reac
 import { useTheme } from '../contexts/ThemeContext';
 import '../styles/FileUpload.css'
 
-const FileUpload = ({ onFileUploaded, isUploading, onUploadStart }) => {
+const FileUpload = ({ onFileUploaded, isUploading, onUploadStart, authToken }) => {
   const [dragActive, setDragActive] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null); // 'success', 'error', null
   const [uploadMessage, setUploadMessage] = useState('');
@@ -46,6 +46,9 @@ const FileUpload = ({ onFileUploaded, isUploading, onUploadStart }) => {
     try {
       const response = await fetch('http://localhost:8000/upload-document', {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+        },
         body: formData,
       });
 

@@ -382,6 +382,7 @@ const handleNewChat = async (sessionId = null) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
         },
         body: JSON.stringify({
           user_input: inputMessage,
@@ -491,6 +492,7 @@ const handleNewChat = async (sessionId = null) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
       },
       body: JSON.stringify({
         user_input: inputMessage,
@@ -575,6 +577,7 @@ const handleNewChat = async (sessionId = null) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
         },
         body: JSON.stringify({
           user_input: expandPrompt,
@@ -901,6 +904,7 @@ const handleNewChat = async (sessionId = null) => {
               onFileUploaded={handleFileUploaded}
               uploadedDocuments={uploadedDocuments}
               isLoading={isLoading}
+              authToken={authToken}
               placeholder={
                 replyingTo 
                   ? `Reply to ${replyingTo.advisorName}...`

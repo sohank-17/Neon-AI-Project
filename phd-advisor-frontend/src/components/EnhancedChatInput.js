@@ -7,7 +7,8 @@ const EnhancedChatInput = ({
   onFileUploaded,
   uploadedDocuments = [],
   isLoading, 
-  placeholder = "Ask your advisors anything about your PhD journey..." 
+  placeholder = "Ask your advisors anything about your PhD journey...",
+  authToken
 }) => {
   const [inputMessage, setInputMessage] = useState('');
   const [showUpload, setShowUpload] = useState(false);
@@ -101,6 +102,7 @@ const EnhancedChatInput = ({
             onFileUploaded={handleFileUploaded}
             isUploading={isUploading}
             onUploadStart={handleUploadStart}
+            authToken={authToken}
           />
         </div>
       )}
