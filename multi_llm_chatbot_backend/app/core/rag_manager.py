@@ -170,290 +170,6 @@ class SimpleEmbeddingFunction:
             # Return dummy embeddings as fallback
             return [[0.0] * 384 for _ in input]  # 384 is dimension for all-MiniLM-L6-v2
 
-class RAGManager:
-    """
-    Retrieval-Augmented Generation Manager - FIXED VERSION
-    
-    Handles document storage, embedding, and retrieval using ChromaDB
-    """
-    
-    def __init__(self, embedding_model: str = "all-MiniLM-L6-v2", persist_directory: str = "./chroma_db"):
-        self.embedding_model_name = embedding_model
-        self.persist_directory = Path(persist_directory)
-        self.persist_directory.mkdir(exist_ok=True)
-        
-        # Initialize embedding model
-        logger.info(f"Loading embedding model: {embedding_model}")
-        try:
-            self.embedding_model = SentenceTransformer(embedding_model)
-            logger.info("Embedding model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load embedding model: {e}")
-            raise
-        
-        # Initialize ChromaDB client
-        try:
-            self.client = chromadb.PersistentClient(
-                path=str(self.persist_directory),
-                settings=Settings(
-                    anonymized_telemetry=False,
-                    allow_reset=True
-                )
-            )
-            logger.info("ChromaDB client initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize ChromaDB client: {e}")
-            raise
-        
-        # Initialize collection
-        self.collection_name = "phd_advisor_documents"
-        self.collection = self._get_or_create_collection()
-        
-        # Initialize chunker
-        self.chunker = DocumentChunker()
-    
-    def _get_or_create_collection(self):
-        """Get or create the ChromaDB collection"""
-        try:
-            # First, try to get existing collection
-            try:
-                collection = self.client.get_collection(
-                    name=self.collection_name
-                )
-                logger.info(f"Found existing collection: {self.collection_name}")
-                return collection
-            except ValueError:
-                # Collection doesn't exist, create it
-                logger.info(f"Creating new collection: {self.collection_name}")
-                collection = self.client.create_collection(
-                    name=self.collection_name,
-                    embedding_function=SimpleEmbeddingFunction(self.embedding_model),
-                    metadata={"description": "PhD Advisor document storage"}
-                )
-                logger.info(f"Created collection: {self.collection_name}")
-                return collection
-                
-        except Exception as e:
-            logger.error(f"Error with collection management: {e}")
-            # Try to reset and recreate
-            try:
-                logger.info("Attempting to reset and recreate collection...")
-                self.client.reset()
-                collection = self.client.create_collection(
-                    name=self.collection_name,
-                    embedding_function=SimpleEmbeddingFunction(self.embedding_model),
-                    metadata={"description": "PhD Advisor document storage"}
-                )
-                logger.info("Successfully recreated collection")
-                return collection
-            except Exception as e2:
-                logger.error(f"Failed to recreate collection: {e2}")
-                raise
-    
-    def add_document(self, content: str, filename: str, session_id: str, file_type: str = "unknown") -> Dict[str, Any]:
-        """
-        Add a document to the vector database
-        """
-        try:
-            # Create base metadata
-            base_metadata = {
-                "filename": filename,
-                "file_type": file_type,
-                "session_id": session_id,
-                "upload_timestamp": str(uuid.uuid4()),  # Using UUID as timestamp for simplicity
-                "file_size": len(content)
-            }
-            
-            # Chunk the document
-            chunks = self.chunker.chunk_text(content, base_metadata)
-            
-            if not chunks:
-                raise ValueError("No chunks created from document")
-            
-            # Prepare data for ChromaDB
-            chunk_ids = [chunk["chunk_id"] for chunk in chunks]
-            chunk_texts = [chunk["text"] for chunk in chunks]
-            chunk_metadatas = [
-                {k: v for k, v in chunk.items() if k != "text" and k != "chunk_id"}
-                for chunk in chunks
-            ]
-            
-            # Add to ChromaDB with error handling
-            try:
-                self.collection.add(
-                    ids=chunk_ids,
-                    documents=chunk_texts,
-                    metadatas=chunk_metadatas
-                )
-                logger.info(f"Successfully added {len(chunks)} chunks for document: {filename}")
-            except Exception as e:
-                logger.error(f"Error adding chunks to ChromaDB: {e}")
-                # Try to recreate collection and try again
-                self.collection = self._get_or_create_collection()
-                self.collection.add(
-                    ids=chunk_ids,
-                    documents=chunk_texts,
-                    metadatas=chunk_metadatas
-                )
-                logger.info(f"Successfully added {len(chunks)} chunks after collection reset")
-            
-            return {
-                "success": True,
-                "filename": filename,
-                "chunks_created": len(chunks),
-                "total_tokens": sum(chunk["token_count"] for chunk in chunks),
-                "chunk_ids": chunk_ids
-            }
-            
-        except Exception as e:
-            logger.error(f"Error adding document {filename}: {str(e)}")
-            return {
-                "success": False,
-                "filename": filename,
-                "error": str(e)
-            }
-    
-    def search_documents(self, query: str, session_id: str, persona_context: str = "", n_results: int = 5) -> List[Dict[str, Any]]:
-        """
-        Search for relevant document chunks
-        """
-        try:
-            # Enhance query with persona context for better retrieval
-            enhanced_query = f"{query} {persona_context}".strip()
-            
-            # Search the collection
-            results = self.collection.query(
-                query_texts=[enhanced_query],
-                n_results=n_results,
-                where={"session_id": session_id}  # Filter by session
-            )
-            
-            # Format results
-            retrieved_chunks = []
-            if results['documents'] and results['documents'][0]:
-                for i, (doc, metadata, distance) in enumerate(zip(
-                    results['documents'][0],
-                    results['metadatas'][0],
-                    results['distances'][0]
-                )):
-                    # ChromaDB returns squared euclidean distance, convert to similarity
-                    # For better similarity scores, we'll use: similarity = 1 / (1 + distance)
-                    similarity_score = 1 / (1 + abs(distance)) if distance is not None else 0.5
-                    
-                    chunk_data = {
-                        "text": doc,
-                        "metadata": metadata,
-                        "relevance_score": similarity_score,
-                        "distance": distance,  # Keep original for debugging
-                        "rank": i + 1
-                    }
-                    retrieved_chunks.append(chunk_data)
-            
-            logger.info(f"Retrieved {len(retrieved_chunks)} chunks for query: {query[:50]}...")
-            return retrieved_chunks
-            
-        except Exception as e:
-            logger.error(f"Error searching documents: {str(e)}")
-            return []
-    
-    def get_document_stats(self, session_id: str) -> Dict[str, Any]:
-        """Get statistics about documents in a session"""
-        try:
-            # Get all chunks for this session
-            results = self.collection.get(
-                where={"session_id": session_id}
-            )
-            
-            if not results or not results.get('metadatas'):
-                return {
-                    "total_chunks": 0,
-                    "total_documents": 0,
-                    "documents": []
-                }
-            
-            # Analyze metadata
-            metadatas = results['metadatas']
-            documents = {}
-            
-            for metadata in metadatas:
-                filename = metadata.get('filename', 'unknown')
-                if filename not in documents:
-                    documents[filename] = {
-                        "filename": filename,
-                        "file_type": metadata.get('file_type', 'unknown'),
-                        "chunk_count": 0,
-                        "total_tokens": 0
-                    }
-                
-                documents[filename]["chunk_count"] += 1
-                documents[filename]["total_tokens"] += metadata.get('token_count', 0)
-            
-            return {
-                "total_chunks": len(metadatas),
-                "total_documents": len(documents),
-                "documents": list(documents.values())
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting document stats: {str(e)}")
-            return {"total_chunks": 0, "total_documents": 0, "documents": []}
-    
-    def delete_session_documents(self, session_id: str) -> bool:
-        """Delete all documents for a session"""
-        try:
-            # Get all document IDs for this session
-            results = self.collection.get(
-                where={"session_id": session_id}
-            )
-            
-            if results and results.get('ids'):
-                chunk_ids = results['ids']
-                self.collection.delete(ids=chunk_ids)
-                logger.info(f"Deleted {len(chunk_ids)} chunks for session: {session_id}")
-                return True
-            
-            return True  # No documents to delete is also success
-            
-        except Exception as e:
-            logger.error(f"Error deleting session documents: {str(e)}")
-            return False
-    
-    def health_check(self) -> Dict[str, Any]:
-        """Check if RAG system is working properly"""
-        try:
-            # Test basic operations
-            test_doc = "This is a test document for health checking."
-            test_session = "health_check_session"
-            
-            # Try adding a test document
-            result = self.add_document(test_doc, "test.txt", test_session, "txt")
-            if not result["success"]:
-                return {"status": "error", "message": "Failed to add test document"}
-            
-            # Try searching
-            search_results = self.search_documents("test", test_session)
-            
-            # Try getting stats
-            stats = self.get_document_stats(test_session)
-            
-            # Cleanup
-            self.delete_session_documents(test_session)
-            
-            return {
-                "status": "healthy",
-                "embedding_model": self.embedding_model_name,
-                "collection_name": self.collection_name,
-                "test_results": {
-                    "add_document": result["success"],
-                    "search_documents": len(search_results) > 0,
-                    "get_stats": stats["total_chunks"] > 0
-                }
-            }
-            
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-
 class EnhancedRAGManager:
     def __init__(self, persist_directory: str = "./chromadb_storage"):
         """Initialize enhanced RAG manager with improved document handling"""
@@ -474,7 +190,7 @@ class EnhancedRAGManager:
         
         logger.info(f"Enhanced RAG Manager initialized with collection: {self.collection.name}")
     
-    def add_document(self, content: str, filename: str, session_id: str, 
+    def add_document(self, content: str, filename: str, session_id: str, user_id: str,
                     file_type: str = "unknown") -> Dict[str, Any]:
         """
         Enhanced document addition with better metadata and document awareness
@@ -505,6 +221,7 @@ class EnhancedRAGManager:
                 
                 # Enhanced metadata with document awareness
                 metadata = {
+                    "user_id": user_id,
                     "session_id": session_id,
                     "filename": filename,
                     "file_type": file_type,
@@ -535,6 +252,7 @@ class EnhancedRAGManager:
             total_tokens = sum(metadata["estimated_tokens"] for metadata in chunk_metadatas)
             
             logger.info(f"Successfully added document {filename}: {len(chunks)} chunks, ~{total_tokens:.0f} tokens")
+            logger.info(f"Session_ID: {session_id} and User_ID: {user_id}")
             
             return {
                 "success": True,
@@ -552,8 +270,9 @@ class EnhancedRAGManager:
                 "error": str(e)
             }
     
-    def search_documents_with_context(self, query: str, session_id: str, 
-                                    persona_context: str = "", n_results: int = 5,
+    def search_documents_with_context(self, query: str, session_id: str, user_id: str,
+                                    persona_context: str = "",
+                                    n_results: int = 5,
                                     document_hint: str = None) -> List[Dict[str, Any]]:
         """
         Enhanced search with document awareness and context
@@ -566,7 +285,7 @@ class EnhancedRAGManager:
             enhanced_query = self._build_enhanced_query(query, persona_context, document_references)
             
             # Base search filters
-            search_filters = {"session_id": session_id}
+            search_filters = {"session_id": session_id, "user_id": user_id}
             
             # If specific document mentioned, prioritize it
             if document_hint or document_references:
@@ -868,12 +587,14 @@ class EnhancedRAGManager:
         
         return content.strip()
     
-    def get_document_stats(self, session_id: str) -> Dict[str, Any]:
+    def get_document_stats(self, session_id: str, user_id: str) -> Dict[str, Any]:
         """Get enhanced statistics about documents in a session"""
         try:
             # Get all chunks for this session
+            where = {"session_id": session_id, "user_id": user_id}
+
             results = self.collection.get(
-                where={"session_id": session_id},
+                where=where,
                 include=["metadatas"]
             )
             
@@ -928,22 +649,55 @@ class EnhancedRAGManager:
         except Exception as e:
             logger.error(f"Error getting document stats: {str(e)}")
             return {"error": str(e), "total_chunks": 0, "total_documents": 0}
+    
+    def delete_session_documents(self, session_id: str, user_id: str) -> bool:
+        try:
+            logger.info(f"[DEBUG] Attempting to delete documents for session_id={session_id}, user_id={user_id}")
+
+            results = self.collection.get(
+                where={"user_id": user_id, "session_id": session_id},
+                include=["ids", "metadatas"]
+            )
+
+            chunk_ids = results.get("ids", [])
+            if not chunk_ids:
+                logger.warning(f"[DEBUG] No chunks found with user_id — falling back to session_id only")
+
+                # Try fallback
+                results = self.collection.get(
+                    where={"session_id": session_id},
+                    include=["ids", "metadatas"]
+                )
+                chunk_ids = results.get("ids", [])
+
+            if chunk_ids:
+                self.collection.delete(ids=chunk_ids)
+                logger.info(f"Deleted {len(chunk_ids)} chunks for session: {session_id}")
+            else:
+                logger.warning(f"No chunks found to delete for session: {session_id}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting session documents: {str(e)}")
+            return False
+
+        
+    def search_documents(self, query: str, session_id: str, user_id: str, persona_context: str = "", n_results: int = 5) -> list:
+        """
+        Compatibility method for old interface. Delegates to search_documents_with_context
+        without document_hint or advanced context parsing.
+        """
+        return self.search_documents_with_context(
+            query=query,
+            session_id=session_id,
+            user_id=user_id,
+            persona_context=persona_context,
+            n_results=n_results
+        )
 
 
-# Global RAG manager instance
 _rag_manager = None
-
-# def get_rag_manager() -> RAGManager:
-#     """Get the global RAG manager instance"""
-#     global _rag_manager
-#     if _rag_manager is None:
-#         try:
-#             _rag_manager = RAGManager()
-#             logger.info("RAG Manager initialized successfully")
-#         except Exception as e:
-#             logger.error(f"Failed to initialize RAG Manager: {e}")
-#             raise
-#     return _rag_manager
 
 def get_rag_manager() -> EnhancedRAGManager:
     """Get or create the global RAG manager instance"""

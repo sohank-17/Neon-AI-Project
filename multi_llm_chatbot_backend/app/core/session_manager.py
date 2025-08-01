@@ -10,8 +10,10 @@ from app.core.rag_manager import get_rag_manager
 class ConversationContext:
     """Enhanced conversation context for RAG integration"""
     
-    def __init__(self, session_id: str = None):
+    def __init__(self, session_id: str = None, user_id: str = None):
         self.session_id = session_id or str(uuid.uuid4())
+        self.user_id = user_id
+
         self.messages: List[Dict[str, str]] = []
         self.uploaded_files: List[str] = []  # Now just stores filenames, not content
         self.total_upload_size: int = 0  # For tracking purposes only
@@ -69,7 +71,7 @@ class ConversationContext:
         # Update document chunk count from RAG manager
         try:
             rag_manager = get_rag_manager()
-            stats = rag_manager.get_document_stats(self.session_id)
+            stats = rag_manager.get_document_stats(self.session_id, self.user_id)
             self.document_chunks_count = stats.get("total_chunks", 0)
         except Exception as e:
             print(f"Warning: Could not update chunk count: {e}")
@@ -82,7 +84,7 @@ class ConversationContext:
         """Get statistics about documents in vector database for this session"""
         try:
             rag_manager = get_rag_manager()
-            return rag_manager.get_document_stats(self.session_id)
+            return rag_manager.get_document_stats(self.session_id, self.user_id)
         except Exception as e:
             return {"error": str(e), "total_chunks": 0, "total_documents": 0}
 
@@ -94,7 +96,7 @@ class ConversationContext:
         # Clear vector database documents
         try:
             rag_manager = get_rag_manager()
-            success = rag_manager.delete_session_documents(self.session_id)
+            success = rag_manager.delete_session_documents(self.session_id, self.user_id)
             if success:
                 self.uploaded_files.clear()
                 self.total_upload_size = 0
@@ -104,6 +106,10 @@ class ConversationContext:
                 self.append_message("system", "Conversation cleared, but some documents may remain")
         except Exception as e:
             self.append_message("system", f"Conversation cleared, document cleanup failed: {str(e)}")
+
+    def get_user_id(self) -> Optional[str]:
+        return self.user_id
+
 
 class SessionManager:
     """Thread-safe session manager for handling multiple user conversations"""
@@ -115,21 +121,21 @@ class SessionManager:
         self.lock = Lock()
         self.last_cleanup = datetime.now()
     
-    def create_session(self) -> str:
+    def create_session(self, user_id: Optional[str] = None) -> str:
         """Create a new session and return session ID"""
         session_id = str(uuid.uuid4())
         with self.lock:
-            self.sessions[session_id] = ConversationContext(session_id=session_id)
+            self.sessions[session_id] = ConversationContext(session_id=session_id, user_id=user_id)
         return session_id
     
-    def get_session(self, session_id: Optional[str] = None) -> ConversationContext:
+    def get_session(self, session_id: str, user_id: Optional[str] = None) -> ConversationContext:
         """Get existing session or create new one"""
         if not session_id:
             session_id = self.create_session()
         
         with self.lock:
             if session_id not in self.sessions:
-                self.sessions[session_id] = ConversationContext(session_id=session_id)
+                self.sessions[session_id] = ConversationContext(session_id=session_id, user_id=user_id)
             
             session = self.sessions[session_id]
             session.last_accessed = datetime.now()

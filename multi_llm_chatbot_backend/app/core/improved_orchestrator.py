@@ -38,6 +38,7 @@ class ImprovedChatOrchestrator:
     async def process_message(self, 
                             user_input: str, 
                             session_id: Optional[str] = None,
+                            user_id: Optional[str] = None,
                             response_length: str = "medium") -> Dict[str, Any]:
         """
         Process a user message through the orchestration pipeline
@@ -65,7 +66,7 @@ class ImprovedChatOrchestrator:
                 }
             
             # Generate responses from all personas
-            responses = await self._generate_persona_responses(session, response_length)
+            responses = await self._generate_persona_responses(session, user_id, response_length)
             
             return {
                 "status": "success",
@@ -81,7 +82,7 @@ class ImprovedChatOrchestrator:
                 "error": str(e)
             }
 
-    async def process_message_with_enhanced_context(self, user_input: str, session_id: str, response_length: str = "medium"):
+    async def process_message_with_enhanced_context(self, user_input: str, session_id: str, user_id: str, response_length: str = "medium"):
         """
         Enhanced message processing with document awareness and better context management
         """
@@ -97,11 +98,11 @@ class ImprovedChatOrchestrator:
             
             # Get available documents for this session
             rag_manager = get_rag_manager()
-            doc_stats = rag_manager.get_document_stats(session_id)
+            doc_stats = rag_manager.get_document_stats(session_id, user_id)
             available_documents = [doc["filename"] for doc in doc_stats.get("documents", [])]
             
             # Generate enhanced persona responses
-            responses = await self._generate_persona_responses(session, response_length)
+            responses = await self._generate_persona_responses(session, user_id, response_length)
             
             return {
                 "status": "success",
@@ -209,7 +210,7 @@ class ImprovedChatOrchestrator:
             "Upload a document for specific feedback"
         ]
     
-    async def _generate_persona_responses(self, session: ConversationContext, response_length: str = "medium"):
+    async def _generate_persona_responses(self, session: ConversationContext, user_id: str, response_length: str = "medium"):
         """
         Generate responses from all personas with enhanced RAG integration
         """
@@ -219,7 +220,7 @@ class ImprovedChatOrchestrator:
             logger.info(f"Generating response for {persona_id} with enhanced RAG")
             
             # Generate persona response with enhanced RAG
-            response_data = await self._generate_single_persona_response(session, persona, response_length)
+            response_data = await self._generate_single_persona_response(session, user_id, persona, response_length)
             
             # Add persona response to session context
             session.append_message(persona_id, response_data["response"])
@@ -228,7 +229,7 @@ class ImprovedChatOrchestrator:
         
         return responses
     
-    async def _generate_single_persona_response(self, session, persona, response_length: str = "medium"):
+    async def _generate_single_persona_response(self, session, user_id,  persona, response_length: str = "medium"):
         """
         Enhanced version - Generate response from a single persona with enhanced RAG integration
         """
@@ -250,6 +251,7 @@ class ImprovedChatOrchestrator:
                 document_context = await self._retrieve_relevant_documents(
                     user_input=user_message,
                     session_id=session.session_id,
+                    user_id=user_id,
                     persona_id=persona.id
                 )
             
@@ -292,7 +294,7 @@ class ImprovedChatOrchestrator:
                 "context_quality": "error"
             }
 
-    async def _retrieve_relevant_documents(self, user_input: str, session_id: str, persona_id: str = "") -> str:
+    async def _retrieve_relevant_documents(self, user_input: str, session_id: str, user_id: str, persona_id: str = "") -> str:
         """
         Enhanced document retrieval with document awareness and better attribution
         """
@@ -309,6 +311,7 @@ class ImprovedChatOrchestrator:
             relevant_chunks = rag_manager.search_documents_with_context(
                 query=user_input,
                 session_id=session_id,
+                user_id= user_id,
                 persona_context=persona_context,
                 n_results=6,  # Increased for better context
                 document_hint=document_hint
@@ -579,7 +582,7 @@ When analyzing the document context:
         """
         return self._get_enhanced_persona_context_keywords(persona_id)
     
-    async def chat_with_persona(self, persona_id: str, user_input: str, session_id: str, response_length: str = "medium") -> Dict[str, Any]:
+    async def chat_with_persona(self, persona_id: str, user_input: str, session_id: str, user_id: str, response_length: str = "medium") -> Dict[str, Any]:
         """
         Chat with a specific persona directly
         """
@@ -595,7 +598,7 @@ When analyzing the document context:
             session.append_message("user", user_input)
             
             # Generate response from single persona
-            response_data = await self._generate_single_persona_response(session, persona, response_length)
+            response_data = await self._generate_single_persona_response(session, user_id, persona, response_length)
             
             # Add response to session
             session.append_message(persona_id, response_data["response"])
