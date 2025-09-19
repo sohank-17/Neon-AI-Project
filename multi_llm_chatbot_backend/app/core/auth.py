@@ -7,7 +7,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from bson import ObjectId
 from app.core.database import get_database
-from app.models.user import User, UserResponse
+from app.models.user import User, UserResponse, PasswordReset
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -114,3 +114,64 @@ def create_user_response(user: User) -> UserResponse:
         created_at=user.created_at,
         last_login=user.last_login
     )
+
+async def create_password_reset_token(email: str) -> Optional[PasswordReset]:
+    """Create a password reset token for the user"""
+    user = await get_user_by_email(email)
+    if not user:
+        return None
+    
+    # Delete any existing reset tokens for this user
+    db = get_database()
+    await db.password_resets.delete_many({"email": email})
+    
+    # Create new reset token
+    reset_token = PasswordReset.create_reset_token(email, str(user.id))
+    
+    # Save to database
+    result = await db.password_resets.insert_one(reset_token.dict(by_alias=True))
+    reset_token.id = result.inserted_id
+    
+    return reset_token
+
+async def verify_reset_code(email: str, reset_code: str) -> Optional[PasswordReset]:
+    """Verify reset code and return token if valid"""
+    db = get_database()
+    
+    # Find the reset token
+    reset_data = await db.password_resets.find_one({
+        "email": email,
+        "reset_code": reset_code,
+        "used": False,
+        "expires_at": {"$gt": datetime.utcnow()}
+    })
+    
+    if reset_data:
+        return PasswordReset(**reset_data)
+    return None
+
+async def reset_user_password(email: str, reset_code: str, new_password: str) -> bool:
+    """Reset user password using reset code"""
+    # Verify the reset code
+    reset_token = await verify_reset_code(email, reset_code)
+    if not reset_token:
+        return False
+    
+    # Update user password
+    db = get_database()
+    hashed_password = get_password_hash(new_password)
+    
+    result = await db.users.update_one(
+        {"email": email},
+        {"$set": {"hashed_password": hashed_password}}
+    )
+    
+    if result.modified_count > 0:
+        # Mark reset token as used
+        await db.password_resets.update_one(
+            {"_id": reset_token.id},
+            {"$set": {"used": True}}
+        )
+        return True
+    
+    return False

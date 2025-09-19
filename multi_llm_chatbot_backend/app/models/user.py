@@ -1,7 +1,9 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional, List, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from bson import ObjectId
+import secrets
+import string
 
 class PyObjectId(ObjectId):
     @classmethod
@@ -87,3 +89,42 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     user: UserResponse
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetVerify(BaseModel):
+    email: EmailStr
+    reset_code: str
+    new_password: str
+
+class PasswordReset(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str}
+    )
+    
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    email: EmailStr
+    reset_code: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
+    used: bool = False
+    user_id: PyObjectId
+
+    @classmethod
+    def create_reset_token(cls, email: str, user_id: str):
+        """Create a new password reset token"""
+        # Generate 6-digit code
+        reset_code = ''.join(secrets.choice(string.digits) for _ in range(6))
+        
+        # Expires in 30 minutes
+        expires_at = datetime.utcnow() + timedelta(minutes=30)
+        
+        return cls(
+            email=email,
+            reset_code=reset_code,
+            expires_at=expires_at,
+            user_id=PyObjectId(user_id)
+        )
