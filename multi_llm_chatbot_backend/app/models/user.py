@@ -52,6 +52,8 @@ class User(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = None
     is_active: bool = True
+    email_verified: bool = False  # New field for email verification
+    email_verified_at: Optional[datetime] = None  # When email was verified
 
 class UserResponse(BaseModel):
     id: str
@@ -62,6 +64,42 @@ class UserResponse(BaseModel):
     researchArea: Optional[str] = None
     created_at: datetime
     last_login: Optional[datetime] = None
+    email_verified: bool = False  # Include in response
+
+class EmailVerification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str}
+    )
+    
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    email: EmailStr
+    user_id: PyObjectId
+    verification_code: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
+    used: bool = False
+    
+    @classmethod
+    def create_verification_token(cls, email: str, user_id: str):
+        """Create a new email verification token"""
+        code = ''.join(secrets.choice(string.digits) for _ in range(6))
+        expires_at = datetime.utcnow() + timedelta(minutes=30)  # 30 minutes expiry
+        
+        return cls(
+            email=email,
+            user_id=PyObjectId(user_id),
+            verification_code=code,
+            expires_at=expires_at
+        )
+
+class EmailVerificationRequest(BaseModel):
+    email: EmailStr
+
+class EmailVerificationVerify(BaseModel):
+    email: EmailStr
+    verification_code: str
 
 class ChatSession(BaseModel):
     model_config = ConfigDict(
@@ -87,16 +125,8 @@ class ChatSessionResponse(BaseModel):
 
 class Token(BaseModel):
     access_token: str
-    token_type: str
+    token_type: str = "bearer"
     user: UserResponse
-
-class PasswordResetRequest(BaseModel):
-    email: EmailStr
-
-class PasswordResetVerify(BaseModel):
-    email: EmailStr
-    reset_code: str
-    new_password: str
 
 class PasswordReset(BaseModel):
     model_config = ConfigDict(
@@ -107,24 +137,29 @@ class PasswordReset(BaseModel):
     
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     email: EmailStr
+    user_id: PyObjectId
     reset_code: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime
     used: bool = False
-    user_id: PyObjectId
-
+    
     @classmethod
     def create_reset_token(cls, email: str, user_id: str):
         """Create a new password reset token"""
-        # Generate 6-digit code
-        reset_code = ''.join(secrets.choice(string.digits) for _ in range(6))
-        
-        # Expires in 30 minutes
+        code = ''.join(secrets.choice(string.digits) for _ in range(6))
         expires_at = datetime.utcnow() + timedelta(minutes=30)
         
         return cls(
             email=email,
-            reset_code=reset_code,
-            expires_at=expires_at,
-            user_id=PyObjectId(user_id)
+            user_id=PyObjectId(user_id),
+            reset_code=code,
+            expires_at=expires_at
         )
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetVerify(BaseModel):
+    email: EmailStr
+    reset_code: str
+    new_password: str
