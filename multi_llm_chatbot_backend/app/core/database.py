@@ -28,8 +28,6 @@ async def connect_to_mongo():
         # Test connection
         await db.client.admin.command('ping')
 
-        # Create indexes for better performance
-
         logger.info(f"Successfully connected to MongoDB database: {db_name}")
         
         # Create indexes for better performance
@@ -65,6 +63,18 @@ async def create_indexes():
         await db.database.chat_sessions.create_index("user_id")
         await db.database.chat_sessions.create_index("created_at")
         await db.database.chat_sessions.create_index([("user_id", 1), ("created_at", -1)])
+        
+        # Indexes for email_verifications collection (NEW)
+        await db.database.email_verifications.create_index("email")
+        await db.database.email_verifications.create_index([("email", 1), ("verification_code", 1)])
+        await db.database.email_verifications.create_index("expires_at", expireAfterSeconds=0)  # TTL index
+        await db.database.email_verifications.create_index("user_id")
+        
+        # Indexes for password_resets collection (already exists but ensuring it's there)
+        await db.database.password_resets.create_index("email")
+        await db.database.password_resets.create_index([("email", 1), ("reset_code", 1)])
+        await db.database.password_resets.create_index("expires_at", expireAfterSeconds=0)  # TTL index
+        await db.database.password_resets.create_index("user_id")
         
         logger.info("Database indexes created successfully")
     except Exception as e:
