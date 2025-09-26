@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Eye, EyeOff, Mail, Lock, User, ArrowRight, BookOpen, Phone, GraduationCap } from 'lucide-react';
 import '../styles/Signup.css';
 
-const Signup = ({ onNavigateToLogin, onNavigateToHome }) => {
+const Signup = ({ onNavigateToLogin, onNavigateToHome, onNavigateToVerification }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -109,10 +109,7 @@ const Signup = ({ onNavigateToLogin, onNavigateToHome }) => {
       const data = await response.json();
 
       if (response.ok) {
-        // Store the token and user info
-        localStorage.setItem('authToken', data.access_token);
-        localStorage.setItem('user', JSON.stringify(data.user));
-        onNavigateToHome?.(data.user, data.access_token);
+        onNavigateToVerification?.(formData.email);
       } else {
         setErrors({ submit: data.detail || 'Signup failed. Please try again.' });
       }

@@ -3,7 +3,7 @@ import { Eye, EyeOff, Mail, Lock, ArrowRight, BookOpen, Phone } from 'lucide-rea
 import ForgotPasswordModal from './ForgotPasswordModal';
 import '../styles/Login.css';
 
-const Login = ({ onNavigateToSignup, onNavigateToHome }) => {
+const Login = ({ onNavigateToSignup, onNavigateToHome, onNavigateToVerification }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
   const [formData, setFormData] = useState({
@@ -74,7 +74,15 @@ const Login = ({ onNavigateToSignup, onNavigateToHome }) => {
         localStorage.setItem('user', JSON.stringify(data.user));
         onNavigateToHome?.(data.user, data.access_token);
       } else {
-        setErrors({ submit: data.detail || 'Login failed. Please try again.' });
+        // Check if it's an email verification error
+        if (response.status === 403 && data.detail.includes('Email not verified')) {
+          setErrors({ 
+            verification: 'Please verify your email address to continue.',
+            showVerificationButton: true 
+          });
+        } else {
+          setErrors({ submit: data.detail || 'Login failed. Please try again.' });
+        }
       }
       
     } catch (error) {
@@ -169,7 +177,45 @@ const Login = ({ onNavigateToSignup, onNavigateToHome }) => {
               {errors.password && (
                 <span className="error-message">{errors.password}</span>
               )}
+              {errors.verification && (
+                <div className="verification-notice" style={{
+                  background: '#fef3cd',
+                  border: '1px solid #fcd34d',
+                  borderRadius: '8px',
+                  padding: '16px',
+                  marginBottom: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px'
+                }}>
+                  <div style={{ color: '#d97706' }}>⚠️</div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ margin: '0 0 8px 0', color: '#92400e', fontSize: '14px' }}>
+                      {errors.verification}
+                    </p>
+                    {errors.showVerificationButton && (
+                      <button
+                        type="button"
+                        onClick={() => onNavigateToVerification?.(formData.email)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#d97706',
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          textDecoration: 'underline',
+                          cursor: 'pointer',
+                          padding: '0'
+                        }}
+                      >
+                        Verify Email Now
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
+            
 
             {/* Forgot Password */}
             <div className="form-actions">
